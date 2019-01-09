@@ -7,7 +7,7 @@ import torch.nn as nn
 
 import utils
 
-rollout_length = 2048
+rollout_length = 999
 discount = 0.99
 use_gae = True
 gae_tau = 0.95
@@ -19,11 +19,10 @@ gradient_clip = 0.5
 
 
 class PPOAgent:
-    def __init__(self, env, states, brain_name, num_agents, network, optimizer, device):
+    def __init__(self, env, num_agents, network, optimizer, device):
         self.env = env
-        self.brain_name = brain_name
+        self.brain_name = self.env.brain_names[0]
         self.num_agents = num_agents
-        self.states = states
         self.network = network
         self.opt = optimizer
         self.device = device
@@ -34,28 +33,27 @@ class PPOAgent:
 
     def step(self):
         storage = utils.Storage(rollout_length)
-        states = self.states
+        env_info = self.env.reset(train_mode=True)[self.brain_name]
+        obs = env_info.vector_observations
         for _ in range(rollout_length):
-            prediction = self.network(torch.from_numpy(states).float().to(self.device))
+            prediction = self.network(torch.from_numpy(obs).float().to(self.device))
             actions = torch.clamp(prediction['a'], -1, 1).cpu().data.numpy()
             env_info = self.env.step(actions)[self.brain_name]
-            next_states = env_info.vector_observations 
+            next_obs = env_info.vector_observations 
             rewards = env_info.rewards 
             terminals = np.array(env_info.local_done).astype(int)
             self.online_rewards += rewards
             rewards = self.reward_normalizer(rewards)
-            for i, terminal in enumerate(terminals):
-                if terminals[i]:
-                    self.episode_rewards.append(self.online_rewards[i])
-                    self.online_rewards[i] = 0
+
             storage.add(prediction)
             storage.add({'r': torch.from_numpy(rewards).float().to(self.device).unsqueeze(-1),
                          'm': torch.from_numpy(1 - terminals).float().to(self.device).unsqueeze(-1),
-                         's': torch.from_numpy(states).float().to(self.device)})
-            states = next_states
+                         's': torch.from_numpy(obs).float().to(self.device)})
+            obs = next_obs
 
-        self.states = states
-        prediction = self.network(torch.from_numpy(states).float().to(self.device))
+        self.episode_rewards.append(self.online_rewards.mean())
+        self.online_rewards = np.zeros(self.num_agents)
+        prediction = self.network(torch.from_numpy(obs).float().to(self.device))
         storage.add(prediction)
         storage.placeholder()
 
