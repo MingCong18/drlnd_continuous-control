@@ -30,6 +30,21 @@ class FCBody(nn.Module):
         return x
 
 
+class TwoLayerFCBodyWithAction(nn.Module):
+    def __init__(self, state_dim, action_dim, hidden_units=(64, 64), gate=F.relu):
+        super(TwoLayerFCBodyWithAction, self).__init__()
+        hidden_size1, hidden_size2 = hidden_units
+        self.fc1 = layer_init(nn.Linear(state_dim, hidden_size1))
+        self.fc2 = layer_init(nn.Linear(hidden_size1 + action_dim, hidden_size2))
+        self.gate = gate
+        self.feature_dim = hidden_size2
+
+    def forward(self, x, action):
+        x = self.gate(self.fc1(x))
+        phi = self.gate(self.fc2(torch.cat([x, action], dim=1)))
+        return phi
+
+
 class DummyBody(nn.Module):
     def __init__(self, state_dim):
         super(DummyBody, self).__init__()
@@ -69,7 +84,6 @@ class GaussianActorCriticNet(nn.Module):
         self.to(DEVICE)
 
     def forward(self, obs, action=None):
-        # obs = tensor(obs)
         phi = self.network.phi_body(obs)
         phi_a = self.network.actor_body(phi)
         phi_v = self.network.critic_body(phi)
@@ -85,3 +99,32 @@ class GaussianActorCriticNet(nn.Module):
                 'ent': entropy,
                 'mean': mean,
                 'v': v}
+
+
+class DeterministicActorCriticNet(nn.Module):
+    def __init__(self,
+                 state_dim,
+                 action_dim,
+                 actor_opt_fn,
+                 critic_opt_fn,
+                 phi_body=None,
+                 actor_body=None,
+                 critic_body=None):
+        super(DeterministicActorCriticNet, self).__init__()
+        self.network = ActorCriticNet(state_dim, action_dim, phi_body, actor_body, critic_body)
+        self.actor_opt = actor_opt_fn(self.network.actor_params + self.network.phi_params)
+        self.critic_opt = critic_opt_fn(self.network.critic_params + self.network.phi_params)
+        self.to(DEVICE)
+
+    def forward(self, obs):
+        action = self.actor(obs)
+        return action
+
+    def feature(self, obs):
+        return self.network.phi_body(obs)
+
+    def actor(self, phi):
+        return F.tanh(self.network.fc_action(self.network.actor_body(phi)))
+
+    def critic(self, phi, a):
+        return self.network.fc_critic(self.network.critic_body(phi, a))
