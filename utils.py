@@ -1,8 +1,78 @@
-# adapted from https://github.com/ShangtongZhang/DeepRL/tree/master/deep_rl/utils
-# Copyright (C) 2017 Shangtong Zhang(zhangshangtong.cpp@gmail.com)
-
 import numpy as np 
+import random
+import copy
+from collections import namedtuple, deque
+
 import torch
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+class OUNoise:
+    """Ornstein-Uhlenbeck process."""
+
+    def __init__(self, size, seed, mu=0., theta=0.15, sigma=0.2):
+        """Initialize parameters and noise process."""
+        self.mu = mu * np.ones(size)
+        self.theta = theta
+        self.sigma = sigma
+        self.seed = random.seed(seed)
+        self.reset()
+
+    def reset(self):
+        """Reset the internal state (= noise) to mean (mu)."""
+        self.state = copy.copy(self.mu)
+
+    def sample(self):
+        """Update internal state and return it as a noise sample."""
+        x = self.state
+        dx = self.theta * (self.mu - x) + self.sigma * np.array([random.random() for i in range(len(x))])
+        self.state = x + dx
+        return self.state
+
+class ReplayBuffer:
+    """Fixed-size buffer to store experience tuples."""
+
+    def __init__(self, action_size, buffer_size, batch_size, seed):
+        """Initialize a ReplayBuffer object.
+        Params
+        ======
+            buffer_size (int): maximum size of buffer
+            batch_size (int): size of each training batch
+        """
+        self.action_size = action_size
+        self.memory = deque(maxlen=buffer_size)  # internal memory (deque)
+        self.batch_size = batch_size
+        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
+        self.seed = random.seed(seed)
+    
+    def add(self, state, action, reward, next_state, done):
+        """Add a new experience to memory."""
+        e = self.experience(state, action, reward, next_state, done)
+        self.memory.append(e)
+    
+    def sample(self):
+        """Randomly sample a batch of experiences from memory."""
+        experiences = random.sample(self.memory, k=self.batch_size)
+
+        states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
+        actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).float().to(device)
+        rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
+        next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
+        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
+
+        return (states, actions, rewards, next_states, dones)
+
+    def __len__(self):
+        """Return the current size of internal memory."""
+        return len(self.memory)
+
+
+def tensor(x):
+    if isinstance(x, torch.Tensor):
+        return x
+    x = torch.tensor(x, device=device, dtype=torch.float32)
+    return x
 
 
 class Storage:
@@ -72,81 +142,3 @@ def random_sample(indices, batch_size):
     if r:
         yield indices[-r:]
 
-
-class Replay:
-    def __init__(self, memory_size, batch_size):
-        self.memory_size = memory_size
-        self.batch_size = batch_size
-        self.data = []
-        self.pos = 0
-
-    def feed(self, experience):
-        if self.pos >= len(self.data):
-            self.data.append(experience)
-        else:
-            self.data[self.pos] = experience
-        self.pos = (self.pos + 1) % self.memory_size
-
-    def feed_batch(self, experience):
-        for exp in experience:
-            self.feed(exp)
-
-    def sample(self, batch_size=None):
-        if self.empty():
-            return None
-        if batch_size is None:
-            batch_size = self.batch_size
-
-        sampled_indices = [np.random.randint(0, len(self.data)) for _ in range(batch_size)]
-        sampled_data = [self.data[ind] for ind in sampled_indices]
-        batch_data = list(map(lambda x: np.asarray(x), zip(*sampled_data)))
-        return batch_data
-
-    def size(self):
-        return len(self.data)
-
-    def empty(self):
-        return not len(self.data)
-
-
-class LinearSchedule:
-    def __init__(self, start, end=None, steps=None):
-        if end is None:
-            end = start
-            steps = 1
-        self.inc = (end - start) / float(steps)
-        self.current = start
-        self.end = end
-        if end > start:
-            self.bound = min
-        else:
-            self.bound = max
-
-    def __call__(self, steps=1):
-        val = self.current
-        self.current = self.bound(self.current + self.inc * steps, self.end)
-        return val
-
-
-class RandomProcess(object):
-    def reset_states(self):
-        pass
-
-
-class OrnsteinUhlenbeckProcess(RandomProcess):
-    def __init__(self, size, std, theta=.15, dt=1e-2, x0=None):
-        self.theta = theta
-        self.mu = 0
-        self.std = std
-        self.dt = dt
-        self.x0 = x0
-        self.size = size
-        self.reset_states()
-
-    def sample(self):
-        x = self.x_prev + self.theta * (self.mu - self.x_prev) * self.dt + self.std() * np.sqrt(self.dt) * np.random.randn(*self.size)
-        self.x_prev = x
-        return x
-
-    def reset_states(self):
-        self.x_prev = self.x0 if self.x0 is not None else np.zeros(self.size)
