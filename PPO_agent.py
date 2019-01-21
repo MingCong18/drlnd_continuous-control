@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 
 import utils
+from network import *
 
 rollout_length = 999
 discount = 0.99
@@ -19,19 +20,19 @@ gradient_clip = 0.5
 
 
 class PPOAgent:
-    def __init__(self, env, num_agents, network, optimizer, device):
+    def __init__(self, env, state_size, action_size, num_agents):
         self.env = env
         self.brain_name = self.env.brain_names[0]
         self.num_agents = num_agents
-        self.network = network
-        self.opt = optimizer
-        self.device = device
+        self.network = GaussianActorCriticNet(state_size, action_size, actor_body=FCBody(state_size, gate=F.tanh),critic_body=FCBody(state_size, gate=F.tanh))
+        self.opt = torch.optim.Adam(self.network.parameters(), 3e-4, eps=1e-5)
+        self.device = utils.device
         self.online_rewards = np.zeros(self.num_agents)
         self.reward_normalizer = utils.RescaleNormalizer()
         self.episode_rewards = []
         self.total_steps = 0
 
-    def step(self):
+    def episode(self):
         storage = utils.Storage(rollout_length)
         env_info = self.env.reset(train_mode=True)[self.brain_name]
         obs = env_info.vector_observations
